@@ -1,0 +1,126 @@
+import requests
+from bs4 import BeautifulSoup
+import dns.resolver
+import socket
+import whois
+import re
+
+class SubdomainEnumerator:
+    def __init__(self, target_domain, wordlist_file, common_ports):
+        self.target_domain = target_domain
+        self.wordlist_file = wordlist_file
+        self.common_ports = common_ports
+        self.emails = []
+
+    def enumerate_subdomains(self):
+        with open(self.wordlist_file, 'r') as f:
+            for line in f:
+                subdomain = line.strip()
+                domain = subdomain + '.' + self.target_domain
+                try:
+                    answers = dns.resolver.resolve(domain, 'A')
+                    for answer in answers:
+                        print('--------------------------------------------------------------------------------')
+                        print(f"{subdomain} => {answer}")
+                        ipaddress = str(answer)
+                        open_ports = []
+                        for port in self.common_ports:
+                            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                            sock.settimeout(1) 
+                            result = sock.connect_ex((ipaddress, port))
+                            if result == 0:
+                                open_ports.append(port)
+                            sock.close()
+
+                        if open_ports:
+                            print(f"Open ports on {subdomain}: {open_ports}")
+                            # Print the URL along with the subdomain
+                            print(f"URL: http://{subdomain}.{self.target_domain}")
+                            # Now scrape links and get HTTP status codes for each link
+                            self.scrape_links(subdomain)
+                except dns.resolver.NXDOMAIN:
+                    pass
+                except dns.resolver.NoAnswer:
+                    pass
+                except dns.resolver.Timeout:
+                    pass
+                except Exception as e:
+                    print(f"Error occurred: {e}")
+
+        self.finalize_operations()  # Run finalize_operations at the end of operations
+
+    def scrape_links(self, subdomain):
+        url = f'http://{subdomain}.{self.target_domain}'
+        print('--------------------------------------------------------------------------------')
+        response = requests.get(url)
+        if response.status_code == 200:
+            soup = BeautifulSoup(response.text, 'html.parser')
+            links = soup.find_all('a')
+            for link in links:
+                href = link.get('href')
+                print(f"Title: {link.text.strip()}, URL: {href}")
+                if href.startswith('http'):
+                    status = requests.head(href).status_code
+                    print(f"Status code for : {status}")
+                    print('--------------------------------------------------------------------------------')
+                else:
+                    print(f"Invalid URL: {href}")
+
+                # Extract emails
+                if href.startswith('mailto:'):
+                    email = href.replace('mailto:', '')
+                    self.emails.append(email)
+
+        else:
+            print(f"Failed to retrieve the page for {subdomain}.{self.target_domain}")
+
+    def get_whois_info(self, domain):
+        try:
+            w = whois.whois(domain)
+            print(w)
+        except Exception as e:
+            print(f"Error getting WHOIS info: {e}")
+
+    def finalize_operations(self):
+        self.extract_emails()  # Extract emails at the end of operations
+
+    def extract_emails(self):
+        if not self.emails:
+            print("No emails were extracted.")
+        else:
+            for email in self.emails:
+                # Print the extracted emails
+                print("Extracted email:", email)
+
+
+def extract_contacts_from_website(target_domain):
+    url = f"https://{target_domain}"
+    response = requests.get(url)
+    if response.status_code == 200:
+        emails = re.findall(r'[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}', response.text)
+        phone_numbers = re.findall(r"021-\d{8}", response.text)
+        phone_numbers1 = re.findall(r"021\d{8}", response.text)
+        return emails, phone_numbers, phone_numbers1
+    else:
+        print("Failed to retrieve the website content.")
+        return [], []
+
+if __name__ == '__main__':
+    target_domain = input("Enter the target domain: ")
+    wordlist_file = 'wordlist.txt'
+    common_ports = [21, 22, 23, 25, 53, 80, 110, 119, 123, 143, 161, 194, 443, 445, 993, 995, 3306]
+    
+    enumerator = SubdomainEnumerator(target_domain, wordlist_file, common_ports)
+    enumerator.enumerate_subdomains()
+    enumerator.get_whois_info(target_domain)
+
+    emails, phone_numbers, phone_numbers1 = extract_contacts_from_website(target_domain)
+
+    print("Emeils: ")
+    for email in emails:
+        print(email)
+    print("Phone Number: ")
+    for number in phone_numbers:
+        print(number)
+    for number in phone_numbers1:
+        print(number)
